@@ -1,0 +1,138 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-api-server:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: 'change-me'
+    AIRFLOW_CONN_POSTGRES_CONN: 'postgres://airflow:airflow@postgres:5432/airflow'
+    AIRFLOW_CONN_VERTICA_CONN: 'vertica://dbadmin:vertica@vertica:5433/mydb'
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./config:/opt/airflow/config
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  vertica:
+    image: molo17/vertica-ce:24.1.0-0
+    container_name: vertica-test
+    environment:
+      VERTICA_DB_NAME: mydb
+      VERTICA_DB_PASSWORD: vertica
+      TZ: Europe/Moscow
+    ports:
+      - "5433:5433"
+      - "5444:5444"
+    volumes:
+      - vertica_test_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/vertica/bin/vsql -U dbadmin -w vertica -d mydb -c 'SELECT 1;'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    mem_limit: 4g
+
+  vertica-init:
+    image: molo17/vertica-ce:24.1.0-0
+    container_name: vertica-init
+    depends_on:
+      vertica:
+        condition: service_healthy
+    volumes:
+      - ./init:/init
+    entrypoint: >
+      bash -c '/opt/vertica/bin/vsql -h vertica -d mydb -U dbadmin -w vertica -f /init/01-vertica-init.sql'
+    restart: "no"
+
+  postgres:
+    image: postgres:17
+    container_name: postgres-airflow
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  postgres-init:
+    image: postgres:17
+    container_name: postgres-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./init:/init
+    environment:
+      PGPASSWORD: airflow
+    entrypoint: >
+      bash -c 'psql -h postgres -U airflow -d airflow -f /init/01-postgres-init.sql'
+    restart: "no"
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    restart: "no"
+
+  airflow-api-server:
+    <<: *airflow-common
+    container_name: airflow-api-server
+    command: api-server
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow-dag-processor
+    command: dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+volumes:
+  vertica_test_data:
+  postgres-db-volume:
