@@ -56,7 +56,7 @@ services:
       vertica:
         condition: service_healthy
     volumes:
-      - ./init:/init
+      - ./init/vertica:/init
     entrypoint: >
       bash -c '/opt/vertica/bin/vsql -h vertica -d mydb -U dbadmin -w vertica -f /init/01-vertica-init.sql'
     restart: "no"
@@ -86,7 +86,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./init:/init
+      - ./init/postgres:/init
     environment:
       PGPASSWORD: airflow
     entrypoint: >
@@ -108,7 +108,7 @@ services:
   airflow-api-server:
     <<: *airflow-common
     container_name: airflow-api-server
-    command: api-server
+    command: api-server --workers 1
     ports:
       - "8080:8080"
     depends_on:

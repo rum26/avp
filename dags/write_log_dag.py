@@ -22,7 +22,7 @@ VALUES (
 @dag(
     dag_id="write_log_to_postgres_and_vertica",
     start_date=datetime(2026, 1, 1),
-    schedule=None,
+    schedule="0 * * * *",
     catchup=False,
     tags=["postgres", "vertica"],
 )
